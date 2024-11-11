@@ -13,7 +13,7 @@ For a simple single-GPU/CPU sampling script, see sample.py.
 """
 import torch
 import torch.distributed as dist
-from models import DiT_models
+from models import Swin_models
 from download import find_model
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
@@ -66,7 +66,7 @@ def main(args):
 
     # Load model:
     latent_size = args.image_size // 8
-    model = DiT_models[args.model](
+    model = Swin_models[args.model](
         input_size=latent_size,
         num_classes=args.num_classes
     ).to(device)
@@ -148,7 +148,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
+    parser.add_argument("--model", type=str, choices=list(Swin_models.keys()), default="DiT-XL/2")
     parser.add_argument("--vae",  type=str, choices=["ema", "mse"], default="ema")
     parser.add_argument("--sample-dir", type=str, default="samples")
     parser.add_argument("--per-proc-batch-size", type=int, default=32)

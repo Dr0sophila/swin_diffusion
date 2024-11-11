@@ -14,7 +14,7 @@ from torchvision.utils import save_image
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
 from download import find_model
-from models import DiT_models
+from models import Swin_models
 import argparse
 
 
@@ -31,7 +31,7 @@ def main(args):
 
     # Load model:
     latent_size = args.image_size // 8
-    model = DiT_models[args.model](
+    model = Swin_models[args.model](
         input_size=latent_size,
         num_classes=args.num_classes
     ).to(device)
@@ -70,7 +70,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
+    parser.add_argument("--model", type=str, choices=list(Swin_models.keys()), default="DiT-XL/2")
     parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="mse")
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
     parser.add_argument("--num-classes", type=int, default=1000)

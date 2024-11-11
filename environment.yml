@@ -1,4 +1,4 @@
-name: DiT
+name: SWD
 channels:
   - pytorch
   - nvidia

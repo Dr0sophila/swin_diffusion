@@ -27,7 +27,7 @@ import argparse
 import logging
 import os
 
-from models import DiT_models
+from models import Swin_models
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
 
@@ -139,7 +139,7 @@ def main(args):
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
-    model = DiT_models[args.model](
+    model = Swin_models[args.model](
         input_size=latent_size,
         num_classes=args.num_classes
     )
@@ -255,8 +255,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-path", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="results")
-    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
-    parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
+    parser.add_argument("--model", type=str, choices=list(Swin_models.keys()), default="DiT-XL/2")
+    parser.add_argument("--image-size", type=int, choices=[256, 512], default=512)
     parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)

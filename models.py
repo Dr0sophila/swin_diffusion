@@ -13,7 +13,7 @@ import numpy as np
 import math
 import torch.utils.checkpoint as checkpoint
 from timm.models.vision_transformer import PatchEmbed, Mlp
-from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+from timm.models.layers import DropPath, to_2tuple
 import torch.nn.functional as F
 
 
@@ -643,7 +643,7 @@ class PatchExpanding(nn.Module):
         self.input_resolution = input_resolution
         self.dim = dim
         self.expand = nn.Linear(dim, 4 * dim, bias=False)
-        self.norm = norm_layer(dim / 2)
+        self.norm = norm_layer(dim // 2)
 
     def forward(self, x):
         """
@@ -658,10 +658,10 @@ class PatchExpanding(nn.Module):
         x = x.view(B, H // 2, W // 2, 4 * C)  # B, H/2, W/2, 4*C
 
         # Split channels back into spatial locations
-        x0 = x[:, :, :, 0:C]  # B, H/2, W/2, C
-        x1 = x[:, :, :, C * 2 * C]  # B, H/2, W/2, C
-        x2 = x[:, :, :, 2 * C * C:3 * C]  # B, H/2, W/2, C
-        x3 = x[:, :, :, 3 * C:4 * C]  # B, H/2, W/2, C
+        x0 = x[:, :, :, 0:C]
+        x1 = x[:, :, :, C:2 * C]
+        x2 = x[:, :, :, 2 * C:3 * C]
+        x3 = x[:, :, :, 3 * C:4 * C]
 
         x_top = torch.cat([x0, x2], dim=2)  # B, H/2, W, C
         x_bottom = torch.cat([x1, x3], dim=2)  # B, H/2, W, C
@@ -733,7 +733,7 @@ class SwinTransformer(nn.Module):
                            attn_drop=attn_drop_rate,
                            drop_path=dpr[sum(layer_depths[:i_layer]):sum(layer_depths[:i_layer + 1])],
                            norm_layer=nn.LayerNorm,
-                           downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
+                           downsample=PatchMerging if (i_layer < self.depth  - 1) else None,
                            use_checkpoint=use_checkpoint,  # set false
                            pretrained_window_size=0)
             self.blocks.append(layer)
@@ -840,7 +840,7 @@ class SwinTransformer(nn.Module):
         # three channels by default. The standard approach to cfg applies it to all channels.
         # This can be done by uncommenting the following line and commenting-out the line following that.
         eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
-        #  eps, rest = model_out[:, :3], model_out[:, 3:]
+        # eps, rest = model_out[:, :3], model_out[:, 3:]
         cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
         eps = torch.cat([half_eps, half_eps], dim=0)
@@ -911,6 +911,6 @@ def Swin():
                            layer_depths=[2, 2, 6, 2])
 
 
-DiT_models = {
+Swin_models = {
     'Swin': Swin
 }
