@@ -283,7 +283,7 @@ class SwinTransformerBlock(nn.Module):
         pretrained_window_size (int): Window size in pre-training.
     """
 
-    def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
+    def __init__(self, dim, input_resolution, num_heads, window_size=4, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm, pretrained_window_size=0):
         super().__init__()
@@ -448,6 +448,7 @@ class BasicLayer(nn.Module):
         else:
             self.downsample = None
 
+    # X (N, T, D) T=1024(64*64/patch_size**2)  256  64 16  (three patch merging)
     def forward(self, x, c):
         for blk in self.blocks:
             if self.use_checkpoint:
@@ -475,31 +476,6 @@ class BasicLayer(nn.Module):
             nn.init.constant_(blk.norm1.weight, 0)
             nn.init.constant_(blk.norm2.bias, 0)
             nn.init.constant_(blk.norm2.weight, 0)
-
-
-# class DiTBlock(nn.Module):
-#     """
-#     A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
-#     """
-#
-#     def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, **block_kwargs):
-#         super().__init__()
-#         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-#         self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
-#         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-#         mlp_hidden_dim = int(hidden_size * mlp_ratio)
-#         approx_gelu = lambda: nn.GELU(approximate="tanh")
-#         self.mlp = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
-#         self.adaLN_modulation = nn.Sequential(
-#             nn.SiLU(),
-#             nn.Linear(hidden_size, 6 * hidden_size, bias=True)
-#         )
-#
-#     def forward(self, x, c):
-#         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
-#         x = x + gate_msa.unsqueeze(1) * self.attn(modulate(self.norm1(x), shift_msa, scale_msa))
-#         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
-#         return x
 
 
 class FinalLayer(nn.Module):
@@ -571,7 +547,6 @@ class PatchMerging(nn.Module):
         flops += H * W * self.dim // 2
         return flops
 
-
 class DiT(nn.Module):
     """
     Diffusion model with a Transformer backbone.
@@ -579,7 +554,7 @@ class DiT(nn.Module):
 
     def __init__(
             self,
-            input_size=32,
+            input_size=64,
             patch_size=2,  # 4 in Swin tranformer
             in_channels=4,
             hidden_size=1152,
@@ -589,8 +564,9 @@ class DiT(nn.Module):
             class_dropout_prob=0.1,
             num_classes=1000,
             learn_sigma=True,
-            layerdepths=[2, 2, 6, 2],  # Swin blocker num
-            window_size=7,
+            layer_depths=[2, 2, 6, 2],  # Swin blocker num
+            # 7 in swin transformer as it's input is 224=4*2*2*2*7, but here input is 64=2(patch size)*2*2*2*4
+            window_size=4,
             qkv_bias=True,
             drop_rate=0.,
             attn_drop_rate=0.,
@@ -618,25 +594,25 @@ class DiT(nn.Module):
         # ])
 
         # stochastic depth
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(layerdepths))]  # stochastic depth decay rule
-
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(layer_depths))]  # stochastic depth decay rule
+        self.blocks = nn.ModuleList()
         for i_layer in range(self.depth):
             layer = BasicLayer(dim=hidden_size,
                                input_resolution=((input_size // patch_size) // (2 ** i_layer)
                                                  , (input_size // patch_size) // (2 ** i_layer)),
-                               depth=layerdepths[i_layer],
+                               depth=layer_depths[i_layer],
                                num_heads=num_heads[i_layer],
                                window_size=window_size,
                                mlp_ratio=self.mlp_ratio,
                                qkv_bias=qkv_bias,
                                drop=drop_rate,
                                attn_drop=attn_drop_rate,
-                               drop_path=dpr[sum(layerdepths[:i_layer]):sum(layerdepths[:i_layer + 1])],
+                               drop_path=dpr[sum(layer_depths[:i_layer]):sum(layer_depths[:i_layer + 1])],
                                norm_layer=nn.LayerNorm,
                                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
                                use_checkpoint=use_checkpoint,  # set false
                                pretrained_window_size=0)
-            self.layers.append(layer)
+            self.blocks.append(layer)
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
 
@@ -699,7 +675,7 @@ class DiT(nn.Module):
         t: (N,) tensor of diffusion timesteps
         y: (N,) tensor of class labels
         """
-        x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
+        x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2=1024
         t = self.t_embedder(t)  # (N, D)
         y = self.y_embedder(y, self.training)  # (N, D)
         c = t + y  # (N, D)
