@@ -2,6 +2,8 @@
 
 Use swin transformer to denoise
 
+check [here](https://github.com/Dr0sophila/swin_diffusion/blob/main/models.py)
+
 code base on DiT
 
 ## Setup

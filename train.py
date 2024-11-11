@@ -229,7 +229,7 @@ def main(args):
                 log_steps = 0
                 start_time = time()
 
-            # Save DiT checkpoint:
+            # Save checkpoint:
             if train_steps % args.ckpt_every == 0 and train_steps > 0:
                 if rank == 0:
                     checkpoint = {
