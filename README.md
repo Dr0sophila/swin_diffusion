@@ -30,6 +30,10 @@ torchrun --nnodes=1 --nproc_per_node=1 train.py --model Swin --data-path /path/t
 
 ## References:
 Swin Transformer: https://github.com/microsoft/Swin-Transformer
+
 DiT: https://github.com/facebookresearch/DiT
+
 GLIDE: https://github.com/openai/glide-text2im
+
 MAE: https://github.com/facebookresearch/mae/blob/main/models_mae.py
+
