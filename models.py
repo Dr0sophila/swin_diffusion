@@ -2,6 +2,7 @@
 # 11/10/2024 Siyuan
 # References:
 # Swin Transformer: https://github.com/microsoft/Swin-Transformer
+# DiT: https://github.com/facebookresearch/DiT
 # GLIDE: https://github.com/openai/glide-text2im
 # MAE: https://github.com/facebookresearch/mae/blob/main/models_mae.py
 # --------------------------------------------------------
@@ -11,7 +12,7 @@ import torch.nn as nn
 import numpy as np
 import math
 import torch.utils.checkpoint as checkpoint
-from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
+from timm.models.vision_transformer import PatchEmbed, Mlp
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import torch.nn.functional as F
 
@@ -97,7 +98,7 @@ class LabelEmbedder(nn.Module):
 
 
 #################################################################################
-#                                 Core DiT Model                                #
+#                                 Core   Model                                  #
 #################################################################################
 
 class WindowAttention(nn.Module):
@@ -398,7 +399,7 @@ class SwinTransformerBlock(nn.Module):
         return flops
 
 
-class BasicLayer(nn.Module):
+class Encode(nn.Module):
     """ A basic Swin Transformer layer for one stage.
 
     Args:
@@ -433,7 +434,7 @@ class BasicLayer(nn.Module):
         self.blocks = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                  num_heads=num_heads, window_size=window_size,
-                                 shift_size=0 if (i % 2 == 0) else window_size // 2,
+                                 shift_size=0 if (i % 2 == 0) else window_size // 2,  # it's 2
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias,
                                  drop=drop, attn_drop=attn_drop,
@@ -457,6 +458,86 @@ class BasicLayer(nn.Module):
                 x = blk(x, c)
         if self.downsample is not None:
             x = self.downsample(x)
+        return x
+
+    def extra_repr(self) -> str:
+        return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
+
+    def flops(self):
+        flops = 0
+        for blk in self.blocks:
+            flops += blk.flops()
+        if self.downsample is not None:
+            flops += self.downsample.flops()
+        return flops
+
+    def _init_respostnorm(self):
+        for blk in self.blocks:
+            nn.init.constant_(blk.norm1.bias, 0)
+            nn.init.constant_(blk.norm1.weight, 0)
+            nn.init.constant_(blk.norm2.bias, 0)
+            nn.init.constant_(blk.norm2.weight, 0)
+
+
+class Decode(nn.Module):
+    """ A basic Swin Transformer layer for one stage.
+
+    Args:
+        dim (int): Number of input channels.
+        input_resolution (tuple[int]): Input resolution.
+        depth (int): Number of blocks.
+        num_heads (int): Number of attention heads.
+        window_size (int): Local window size.
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.
+        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
+        drop (float, optional): Dropout rate. Default: 0.0
+        attn_drop (float, optional): Attention dropout rate. Default: 0.0
+        drop_path (float | tuple[float], optional): Stochastic depth rate. Default: 0.0
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm
+        upsample (nn.Module | None, optional): Downsample layer at the end of the layer. Default: None
+        use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False.
+        pretrained_window_size (int): Local window size in pre-training.
+    """
+
+    def __init__(self, dim, input_resolution, depth, num_heads, window_size,
+                 mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0.,
+                 drop_path=0., norm_layer=nn.LayerNorm, upsample=None, use_checkpoint=False,
+                 pretrained_window_size=0):
+
+        super().__init__()
+        self.dim = dim
+        self.input_resolution = input_resolution
+        self.depth = depth
+        self.use_checkpoint = use_checkpoint
+
+        # build blocks
+        self.blocks = nn.ModuleList([
+            SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
+                                 num_heads=num_heads, window_size=window_size,
+                                 shift_size=0 if (i % 2 == 0) else window_size // 2,  # it's 2
+                                 mlp_ratio=mlp_ratio,
+                                 qkv_bias=qkv_bias,
+                                 drop=drop, attn_drop=attn_drop,
+                                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                                 norm_layer=norm_layer,
+                                 pretrained_window_size=pretrained_window_size)
+            for i in range(depth)])
+
+        # patch merging layer
+        if upsample is not None:
+            self.upsample = upsample(input_resolution, dim=dim, norm_layer=norm_layer)
+        else:
+            self.upsample = None
+
+    # X (N, T, D) T=1024(64*64/patch_size**2)  256  64 16  (three patch merging)
+    def forward(self, x, c):
+        if self.upsample is not None:
+            x = self.upsample(x)
+        for blk in self.blocks:
+            if self.use_checkpoint:
+                x = checkpoint.checkpoint(blk, x, c)
+            else:
+                x = blk(x, c)
         return x
 
     def extra_repr(self) -> str:
@@ -547,9 +628,54 @@ class PatchMerging(nn.Module):
         flops += H * W * self.dim // 2
         return flops
 
-class DiT(nn.Module):
+
+class PatchExpanding(nn.Module):
+    r""" Patch Expanding Layer.
+
+    Args:
+        input_resolution (tuple[int]): Resolution of input feature.
+        dim (int): Number of input channels.
+        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
-    Diffusion model with a Transformer backbone.
+
+    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.input_resolution = input_resolution
+        self.dim = dim
+        self.expand = nn.Linear(dim, 4 * dim, bias=False)
+        self.norm = norm_layer(dim / 2)
+
+    def forward(self, x):
+        """
+        x: B, H/2*W/2, 2*C --> B, H*W, C
+        """
+        H, W = self.input_resolution
+        B, L, C = x.shape
+        assert L == (H // 2) * (W // 2), "input feature has wrong size"
+        assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
+
+        x = self.expand(x)  # B, H/2*W/2, 4*C
+        x = x.view(B, H // 2, W // 2, 4 * C)  # B, H/2, W/2, 4*C
+
+        # Split channels back into spatial locations
+        x0 = x[:, :, :, 0:C]  # B, H/2, W/2, C
+        x1 = x[:, :, :, C * 2 * C]  # B, H/2, W/2, C
+        x2 = x[:, :, :, 2 * C * C:3 * C]  # B, H/2, W/2, C
+        x3 = x[:, :, :, 3 * C:4 * C]  # B, H/2, W/2, C
+
+        x_top = torch.cat([x0, x2], dim=2)  # B, H/2, W, C
+        x_bottom = torch.cat([x1, x3], dim=2)  # B, H/2, W, C
+        x = torch.cat([x_top, x_bottom], dim=1)  # B, H, W, C
+
+        x = x.view(B, H * W, C)  # B, H*W, C
+        x = self.norm(x)
+
+        return x
+
+
+class SwinTransformer(nn.Module):
+    """
+    Diffusion model with a Swin Transformer backbone.
     """
 
     def __init__(
@@ -558,20 +684,21 @@ class DiT(nn.Module):
             patch_size=2,  # 4 in Swin tranformer
             in_channels=4,
             hidden_size=1152,
-            depth=4,
-            num_heads=[3, 6, 12, 24],  # USED IN SWIN TRANSFORMER
+            depth=4,  # num of stages
+            num_heads=None,
             mlp_ratio=4.0,
             class_dropout_prob=0.1,
             num_classes=1000,
             learn_sigma=True,
-            layer_depths=[2, 2, 6, 2],  # Swin blocker num
-            # 7 in swin transformer as it's input is 224=4*2*2*2*7, but here input is 64=2(patch size)*2*2*2*4
+            layer_depths=None,  # Swin blocker num, set as [2, 2, 6, 2]
+            #  window_size 7 in swin transformer as it's input is 224=4*2*2*2*7,
+            #  but here input is 64=2(patch size)*2*2*2*4
             window_size=4,
             qkv_bias=True,
             drop_rate=0.,
             attn_drop_rate=0.,
             drop_path_rate=0.1,
-            use_checkpoint=False
+            use_checkpoint=False  # not used
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
@@ -579,7 +706,7 @@ class DiT(nn.Module):
         self.out_channels = in_channels * 2 if learn_sigma else in_channels
         self.patch_size = patch_size
         self.num_heads = num_heads
-        self.depth = depth  # num of stages
+        self.depth = depth
         self.mlp_ratio = mlp_ratio
 
         self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
@@ -589,33 +716,50 @@ class DiT(nn.Module):
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
 
-        # self.blocks = nn.ModuleList([
-        #     DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
-        # ])
-
-        # stochastic depth
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(layer_depths))]  # stochastic depth decay rule
+        dpr = [x.item() for x in
+               torch.linspace(0, drop_path_rate, sum(layer_depths) * 2)]  # stochastic depth decay rule
         self.blocks = nn.ModuleList()
         for i_layer in range(self.depth):
-            layer = BasicLayer(dim=hidden_size,
-                               input_resolution=((input_size // patch_size) // (2 ** i_layer)
-                                                 , (input_size // patch_size) // (2 ** i_layer)),
-                               depth=layer_depths[i_layer],
-                               num_heads=num_heads[i_layer],
-                               window_size=window_size,
-                               mlp_ratio=self.mlp_ratio,
-                               qkv_bias=qkv_bias,
-                               drop=drop_rate,
-                               attn_drop=attn_drop_rate,
-                               drop_path=dpr[sum(layer_depths[:i_layer]):sum(layer_depths[:i_layer + 1])],
-                               norm_layer=nn.LayerNorm,
-                               downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
-                               use_checkpoint=use_checkpoint,  # set false
-                               pretrained_window_size=0)
+            layer = Encode(dim=hidden_size,
+                           #  32 16 8 4
+                           input_resolution=((input_size // patch_size) // (2 ** i_layer)
+                                             , (input_size // patch_size) // (2 ** i_layer)),
+                           depth=layer_depths[i_layer],
+                           num_heads=num_heads[i_layer],
+                           window_size=window_size,  # set as 4
+                           mlp_ratio=self.mlp_ratio,
+                           qkv_bias=qkv_bias,
+                           drop=drop_rate,
+                           attn_drop=attn_drop_rate,
+                           drop_path=dpr[sum(layer_depths[:i_layer]):sum(layer_depths[:i_layer + 1])],
+                           norm_layer=nn.LayerNorm,
+                           downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
+                           use_checkpoint=use_checkpoint,  # set false
+                           pretrained_window_size=0)
+            self.blocks.append(layer)
+        for i_layer in range(self.depth, -1, -1):
+            layer = Decode(dim=hidden_size,
+                           #  4 8 16 32
+                           input_resolution=((input_size // patch_size) // (2 ** i_layer)
+                                             , (input_size // patch_size) // (2 ** i_layer)),
+                           depth=layer_depths[i_layer],  # [2 6 6 2]
+                           num_heads=num_heads[i_layer],
+                           window_size=window_size,  # set as 4
+                           mlp_ratio=self.mlp_ratio,
+                           qkv_bias=qkv_bias,
+                           drop=drop_rate,
+                           attn_drop=attn_drop_rate,
+                           drop_path=dpr[sum(layer_depths) + sum(layer_depths[i_layer + 1:]):
+                                         sum(layer_depths) + sum(layer_depths[i_layer:])],
+                           norm_layer=nn.LayerNorm,
+                           upsample=None if (i_layer == 0) else PatchExpanding,
+                           use_checkpoint=use_checkpoint,  # set false
+                           pretrained_window_size=0)
             self.blocks.append(layer)
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
 
+    #  FIXME : init wight
     def initialize_weights(self):
         # Initialize transformer layers:
         def _basic_init(module):
@@ -670,7 +814,6 @@ class DiT(nn.Module):
 
     def forward(self, x, t, y):
         """
-        Forward pass of DiT.
         x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
         t: (N,) tensor of diffusion timesteps
         y: (N,) tensor of class labels
@@ -687,7 +830,7 @@ class DiT(nn.Module):
 
     def forward_with_cfg(self, x, t, y, cfg_scale):
         """
-        Forward pass of DiT, but also batches the unconditional forward pass for classifier-free guidance.
+        batches the unconditional forward pass for classifier-free guidance.
         """
         # https://github.com/openai/glide-text2im/blob/main/notebooks/text2im.ipynb
         half = x[: len(x) // 2]
@@ -696,8 +839,8 @@ class DiT(nn.Module):
         # For exact reproducibility reasons, we apply classifier-free guidance on only
         # three channels by default. The standard approach to cfg applies it to all channels.
         # This can be done by uncommenting the following line and commenting-out the line following that.
-        # eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
-        eps, rest = model_out[:, :3], model_out[:, 3:]
+        eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
+        #  eps, rest = model_out[:, :3], model_out[:, 3:]
         cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
         eps = torch.cat([half_eps, half_eps], dim=0)
@@ -760,64 +903,14 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
 
 
 #################################################################################
-#                                   DiT Configs                                  #
+#                                      Configs                                  #
 #################################################################################
 
-def Swin(**kwargs):
-    return DiT(depth=4, hidden_size=1152, patch_size=2, num_heads=[3, 6, 12, 24], **kwargs)
-
-
-def DiT_XL_2(**kwargs):
-    return DiT(depth=28, hidden_size=1152, patch_size=2, num_heads=16, **kwargs)
-
-
-def DiT_XL_4(**kwargs):
-    return DiT(depth=28, hidden_size=1152, patch_size=4, num_heads=16, **kwargs)
-
-
-def DiT_XL_8(**kwargs):
-    return DiT(depth=28, hidden_size=1152, patch_size=8, num_heads=16, **kwargs)
-
-
-def DiT_L_2(**kwargs):
-    return DiT(depth=24, hidden_size=1024, patch_size=2, num_heads=16, **kwargs)
-
-
-def DiT_L_4(**kwargs):
-    return DiT(depth=24, hidden_size=1024, patch_size=4, num_heads=16, **kwargs)
-
-
-def DiT_L_8(**kwargs):
-    return DiT(depth=24, hidden_size=1024, patch_size=8, num_heads=16, **kwargs)
-
-
-def DiT_B_2(**kwargs):
-    return DiT(depth=12, hidden_size=768, patch_size=2, num_heads=12, **kwargs)
-
-
-def DiT_B_4(**kwargs):
-    return DiT(depth=12, hidden_size=768, patch_size=4, num_heads=12, **kwargs)
-
-
-def DiT_B_8(**kwargs):
-    return DiT(depth=12, hidden_size=768, patch_size=8, num_heads=12, **kwargs)
-
-
-def DiT_S_2(**kwargs):
-    return DiT(depth=12, hidden_size=384, patch_size=2, num_heads=6, **kwargs)
-
-
-def DiT_S_4(**kwargs):
-    return DiT(depth=12, hidden_size=384, patch_size=4, num_heads=6, **kwargs)
-
-
-def DiT_S_8(**kwargs):
-    return DiT(depth=12, hidden_size=384, patch_size=8, num_heads=6, **kwargs)
+def Swin():
+    return SwinTransformer(depth=4, hidden_size=1152, patch_size=2, num_heads=[3, 6, 12, 24],
+                           layer_depths=[2, 2, 6, 2])
 
 
 DiT_models = {
-    'DiT-XL/2': DiT_XL_2, 'DiT-XL/4': DiT_XL_4, 'DiT-XL/8': DiT_XL_8,
-    'DiT-L/2': DiT_L_2, 'DiT-L/4': DiT_L_4, 'DiT-L/8': DiT_L_8,
-    'DiT-B/2': DiT_B_2, 'DiT-B/4': DiT_B_4, 'DiT-B/8': DiT_B_8,
-    'DiT-S/2': DiT_S_2, 'DiT-S/4': DiT_S_4, 'DiT-S/8': DiT_S_8,
+    'Swin': Swin
 }
