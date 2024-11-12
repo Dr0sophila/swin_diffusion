@@ -139,10 +139,9 @@ def main(args):
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
-    model = Swin_models[args.model](
-        input_size=latent_size,
-        num_classes=args.num_classes
-    )
+    #  input_size=64
+    #  num_class =1000
+    model = Swin_models[args.model]()
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
     requires_grad(ema, False)
