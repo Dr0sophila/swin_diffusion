@@ -737,7 +737,7 @@ class SwinTransformer(nn.Module):
                            use_checkpoint=use_checkpoint,  # set false
                            pretrained_window_size=0)
             self.blocks.append(layer)
-        for i_layer in range(self.depth, -1, -1):
+        for i_layer in range(self.depth - 1, -1, -1):
             layer = Decode(dim=hidden_size,
                            #  4 8 16 32
                            input_resolution=((input_size // patch_size) // (2 ** i_layer)
