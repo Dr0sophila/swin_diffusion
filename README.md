@@ -12,7 +12,7 @@ First, download and set up the repo:
 
 ```
 git clone https://github.com/Dr0sophila/swin_diffusion
-cd DiT
+cd swin_diffusion
 ```
 
 create env
