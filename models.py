@@ -642,7 +642,7 @@ class PatchExpanding(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-        self.expand = nn.Linear(dim, 4 * dim, bias=False)
+        self.expand = nn.Linear(dim, 2 * dim, bias=False)
         self.norm = norm_layer(dim // 2)
 
     def forward(self, x):
