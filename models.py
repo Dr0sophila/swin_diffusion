@@ -904,8 +904,12 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
 def Swin():
     return SwinTransformer(depth=4, hidden_size=1152, patch_size=2, num_heads=[3, 6, 12, 24],
                            layer_depths=[2, 2, 6, 2])
+def Swin_small():
+    return SwinTransformer(depth=4, hidden_size=1152, patch_size=2, num_heads=[3, 6, 8, 12],
+                           layer_depths=[2, 2, 4, 2])
 
 
 Swin_models = {
-    'Swin': Swin
+    'Swin': Swin,
+    'Swin_s': Swin_small
 }

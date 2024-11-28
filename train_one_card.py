@@ -90,7 +90,6 @@ def main(args):
     # Set device and seed:
     device = torch.device("cuda")
     torch.manual_seed(args.global_seed)
-    torch.cuda.set_device(device)
 
     # Setup an experiment folder:
     os.makedirs(args.results_dir, exist_ok=True)  # Make results folder (holds all experiment subfolders)
