@@ -27,6 +27,11 @@ conda activate SWD
 ```
 torchrun --nnodes=1 --nproc_per_node=1 train.py --model Swin --data-path /path/to/imagenet/train
 ```
+## Train on one card 
+
+```
+python train_one_card.py --model Swin --data-path /path/to/imagenet/train
+```
 
 **~~not tested~~**
 
