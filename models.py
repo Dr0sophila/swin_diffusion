@@ -642,7 +642,7 @@ class PatchExpanding(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-        self.expand = nn.Linear(dim, 2 * dim, bias=False)
+        self.expand = nn.Linear(2*dim, 4 * dim, bias=False)
         self.norm = norm_layer(dim // 2)
 
     def forward(self, x):
@@ -651,12 +651,12 @@ class PatchExpanding(nn.Module):
         """
         H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
+        assert L == H * W//4, "input feature has wrong size"
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
 
         x = self.expand(x)  # B, H/2*W/2, 2*C
-        x = x.view(B, H, W, 2 * C)  # B, H/2, W/2, 2*C
-        cSlice=C/2
+        x = x.view(B, H//2, W//2, 2 * C)  # B, H/2, W/2, 2*C
+        cSlice=C//2
         # Split channels back into spatial locations
         x0 = x[:, :, :, 0:cSlice]
         x1 = x[:, :, :, cSlice:2 * cSlice]
@@ -667,7 +667,7 @@ class PatchExpanding(nn.Module):
         x_bottom = torch.cat([x1, x3], dim=2)  # B, H/2, W, C
         x = torch.cat([x_top, x_bottom], dim=1)  # B, H, W, C
 
-        x = x.view(B, H*2 * W*2, cSlice)  # B, H*W, C
+        x = x.view(B, H * W, cSlice)  # B, H*W, C
         x = self.norm(x)
 
         return x
@@ -750,7 +750,7 @@ class SwinTransformer(nn.Module):
                            drop_path=dpr[sum(layer_depths) + sum(layer_depths[i_layer + 1:]):
                                          sum(layer_depths) + sum(layer_depths[i_layer:])],
                            norm_layer=nn.LayerNorm,
-                           upsample=None if (i_layer == 0) else PatchExpanding,
+                           upsample=None if (i_layer == self.depth - 1) else PatchExpanding,
                            use_checkpoint=use_checkpoint,  # set false
                            pretrained_window_size=0)
             self.blocks.append(layer)
