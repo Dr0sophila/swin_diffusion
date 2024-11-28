@@ -720,8 +720,7 @@ class SwinTransformer(nn.Module):
                torch.linspace(0, drop_path_rate, sum(layer_depths) * 2)]  # stochastic depth decay rule
         self.blocks = nn.ModuleList()
         for i_layer in range(self.depth):
-            layer = Encode(dim=hidden_size,
-                           #  32 16 8 4
+            layer = Encode(dim=int(hidden_size*2**i_layer),
                            input_resolution=((input_size // patch_size) // (2 ** i_layer)
                                              , (input_size // patch_size) // (2 ** i_layer)),
                            depth=layer_depths[i_layer],
@@ -738,8 +737,7 @@ class SwinTransformer(nn.Module):
                            pretrained_window_size=0)
             self.blocks.append(layer)
         for i_layer in range(self.depth - 1, -1, -1):
-            layer = Decode(dim=hidden_size,
-                           #  4 8 16 32
+            layer = Decode(dim=int(hidden_size*2**i_layer),
                            input_resolution=((input_size // patch_size) // (2 ** i_layer)
                                              , (input_size // patch_size) // (2 ** i_layer)),
                            depth=layer_depths[i_layer],  # [2 6 6 2]
