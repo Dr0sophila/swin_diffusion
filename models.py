@@ -907,9 +907,13 @@ def Swin():
 def Swin_small():
     return SwinTransformer(depth=4, hidden_size=1152, patch_size=2, num_heads=[3, 6, 8, 12],
                            layer_depths=[2, 2, 4, 2])
+def Swin_tiny():
+    return SwinTransformer(depth=3, hidden_size=1152, patch_size=2, num_heads=[3, 6, 8],
+                           layer_depths=[2, 4, 2])
 
 
 Swin_models = {
     'Swin': Swin,
-    'Swin_s': Swin_small
+    'Swin_s': Swin_small,
+    'Swin_t': Swin_tiny
 }
