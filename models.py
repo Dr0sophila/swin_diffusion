@@ -651,23 +651,23 @@ class PatchExpanding(nn.Module):
         """
         H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == (H // 2) * (W // 2), "input feature has wrong size"
+        assert L == H * W, "input feature has wrong size"
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
 
-        x = self.expand(x)  # B, H/2*W/2, 4*C
-        x = x.view(B, H // 2, W // 2, 4 * C)  # B, H/2, W/2, 4*C
-
+        x = self.expand(x)  # B, H/2*W/2, 2*C
+        x = x.view(B, H, W, 2 * C)  # B, H/2, W/2, 2*C
+        cSlice=C/2
         # Split channels back into spatial locations
-        x0 = x[:, :, :, 0:C]
-        x1 = x[:, :, :, C:2 * C]
-        x2 = x[:, :, :, 2 * C:3 * C]
-        x3 = x[:, :, :, 3 * C:4 * C]
+        x0 = x[:, :, :, 0:cSlice]
+        x1 = x[:, :, :, cSlice:2 * cSlice]
+        x2 = x[:, :, :, 2 * cSlice:3 * cSlice]
+        x3 = x[:, :, :, 3 * cSlice:4 * cSlice]
 
         x_top = torch.cat([x0, x2], dim=2)  # B, H/2, W, C
         x_bottom = torch.cat([x1, x3], dim=2)  # B, H/2, W, C
         x = torch.cat([x_top, x_bottom], dim=1)  # B, H, W, C
 
-        x = x.view(B, H * W, C)  # B, H*W, C
+        x = x.view(B, H*2 * W*2, cSlice)  # B, H*W, C
         x = self.norm(x)
 
         return x
