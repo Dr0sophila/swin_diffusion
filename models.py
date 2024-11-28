@@ -594,7 +594,7 @@ class PatchMerging(nn.Module):
         self.input_resolution = input_resolution
         self.dim = dim
         self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
-        self.norm = norm_layer(2 * dim)
+        self.norm = norm_layer(dim)
 
     def forward(self, x):
         """
@@ -643,7 +643,7 @@ class PatchExpanding(nn.Module):
         self.input_resolution = input_resolution
         self.dim = dim
         self.expand = nn.Linear(2*dim, 4 * dim, bias=False)
-        self.norm = norm_layer(dim // 2)
+        self.norm = norm_layer(dim)
 
     def forward(self, x):
         """
