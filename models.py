@@ -284,9 +284,9 @@ class SwinTransformerBlock(nn.Module):
         pretrained_window_size (int): Window size in pre-training.
     """
 
-    def __init__(self, dim, input_resolution, num_heads, window_size=4, shift_size=0,
+    def __init__(self, dim, input_resolution, num_heads, c_size=1152,window_size=4, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0., drop_path=0.,
-                 act_layer=nn.GELU, norm_layer=nn.LayerNorm, pretrained_window_size=0):
+                 act_layer=nn.GELU, norm_layer=nn.LayerNorm, pretrained_window_size=0,):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -313,7 +313,7 @@ class SwinTransformerBlock(nn.Module):
 
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
-            nn.Linear(dim, 6 * dim, bias=True)
+            nn.Linear(c_size, 6 * dim, bias=True)
         )
 
         if self.shift_size > 0:

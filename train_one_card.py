@@ -1,5 +1,3 @@
-# Rewrite of the minimal training script for DiT using a single GPU.
-
 import torch
 from torch.utils.data import DataLoader
 from torchvision.datasets import ImageFolder
@@ -7,7 +5,6 @@ from torchvision import transforms
 import numpy as np
 from collections import OrderedDict
 from PIL import Image
-from copy import deepcopy
 from glob import glob
 from time import time
 import argparse
@@ -22,18 +19,6 @@ from diffusers.models import AutoencoderKL
 #################################################################################
 #                             Training Helper Functions                         #
 #################################################################################
-
-@torch.no_grad()
-def update_ema(ema_model, model, decay=0.9999):
-    """
-    Step the EMA model towards the current model.
-    """
-    ema_params = OrderedDict(ema_model.named_parameters())
-    model_params = OrderedDict(model.named_parameters())
-
-    for name, param in model_params.items():
-        ema_params[name].mul_(decay).add_(param.data, alpha=1 - decay)
-
 
 def requires_grad(model, flag=True):
     """
@@ -104,10 +89,7 @@ def main(args):
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
-    model = Swin_models[args.model]()
-    ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
-    requires_grad(ema, False)
-    model = model.to(device)
+    model = Swin_models[args.model]().to(device)
     diffusion = create_diffusion(timestep_respacing="")  # default: 1000 steps, linear noise schedule
     vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
     logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -134,9 +116,7 @@ def main(args):
     logger.info(f"Dataset contains {len(dataset):,} images ({args.data_path})")
 
     # Prepare models for training:
-    update_ema(ema, model, decay=0)  # Ensure EMA is initialized with synced weights
     model.train()  # important! This enables embedding dropout for classifier-free guidance
-    ema.eval()  # EMA model should always be in eval mode
 
     # Variables for monitoring/logging purposes:
     train_steps = 0
@@ -160,7 +140,6 @@ def main(args):
             opt.zero_grad()
             loss.backward()
             opt.step()
-            update_ema(ema, model)
 
             # Log loss values:
             running_loss += loss.item()
@@ -182,7 +161,6 @@ def main(args):
             if train_steps % args.ckpt_every == 0 and train_steps > 0:
                 checkpoint = {
                     "model": model.state_dict(),
-                    "ema": ema.state_dict(),
                     "opt": opt.state_dict(),
                     "args": args
                 }
