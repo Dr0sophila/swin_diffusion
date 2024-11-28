@@ -647,7 +647,7 @@ class PatchExpanding(nn.Module):
 
     def forward(self, x):
         """
-        x: B, H/2*W/2, 2*C --> B, H*W, C
+        x: B, H*W, C --> B, 2H*2W, C/2
         """
         H, W = self.input_resolution
         B, L, C = x.shape
