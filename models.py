@@ -594,7 +594,7 @@ class PatchMerging(nn.Module):
         self.input_resolution = input_resolution
         self.dim = dim
         self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
-        self.norm = norm_layer(dim)
+        self.norm = norm_layer(2*dim)
 
     def forward(self, x):
         """
